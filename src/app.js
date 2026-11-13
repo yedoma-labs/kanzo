@@ -71,6 +71,41 @@ function localStorageSet(k, v) {
   try { localStorage.setItem(k, v); } catch {}
 }
 
+const systemTheme = matchMedia("(prefers-color-scheme: dark)");
+let themePreference = readThemePreference();
+
+function readThemePreference() {
+  const saved = localStorageGet("kanzo.theme");
+  return saved === "light" || saved === "dark" ? saved : "system";
+}
+
+function applyTheme() {
+  const dark = themePreference === "dark" || (themePreference === "system" && systemTheme.matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  $('meta[name="theme-color"]').content = dark ? "#000000" : "#f9f9f9";
+  $("#settings-theme").value = themePreference;
+}
+
+function onSystemThemeChange() {
+  if (themePreference === "system") applyTheme();
+}
+
+// Safari 13.1 only supports the older MediaQueryList API.
+if (systemTheme.addEventListener) systemTheme.addEventListener("change", onSystemThemeChange);
+else systemTheme.addListener(onSystemThemeChange);
+window.addEventListener("storage", (e) => {
+  if (e.key === "kanzo.theme" || e.key === null) {
+    themePreference = readThemePreference();
+    applyTheme();
+  }
+});
+$("#settings-theme").addEventListener("change", (e) => {
+  themePreference = e.target.value;
+  localStorageSet("kanzo.theme", themePreference);
+  applyTheme();
+});
+applyTheme();
+
 // The board's language: a saved choice wins, else the browser's. English is the
 // source strings, so it runs with no dictionary at all.
 const LANG = (() => {
@@ -1032,15 +1067,24 @@ async function spread(group, grabbed, from, place) {
 
 // In the list, a row: no drag to reorder, since a sorted list has no one position to drop into.
 function card(t, showProject, row) {
-  const node = el("div", { class: "card" + (row ? " row" : "") + (state.task === t.id ? " open" : "") + (t.waiting_on ? " waiting" : "") + (state.selected.has(t.id) ? " selected" : ""),
+  // A human task in review waits for a person: said in words too, not only in the border and tint.
+  // Hiding the Human property hides the mark and, in CSS, the highlight.
+  const review = t.human && t.status === "review";
+  const mark = t.human
+    ? el("span", { class: "human-mark" + (review ? " review" : ""), title: tr("Human task: agents skip it") },
+        icon("human"), review ? tr("Human review") : null)
+    : null;
+  const node = el("div", { class: "card" + (row ? " row" : "") + (state.task === t.id ? " open" : "") + (t.waiting_on ? " waiting" : "") + (review ? " human-review" : "") + (state.selected.has(t.id) ? " selected" : ""),
                            draggable: row ? null : "true", "data-id": t.id,
                            onclick: (e) => { if (e.metaKey || e.ctrlKey) toggleSelected(t.id); else openTask(t.id); } },
     row ? statusIcon(t.status) : null,
     el("div", { class: "head" },
       el("div", { class: "title" }, t.title),
-      t.human ? el("span", { class: "human-mark", title: tr("Human task: agents skip it") }, icon("human")) : null,
+      // On a board card the words get their own line, so a narrow column keeps room for the title.
+      row || !review ? mark : null,
       el("span", { class: "num", title: tr("Copy {0}", key(t)), onclick: (e) => { e.stopPropagation(); copyKey(key(t)); } },
         showProject ? el("span", { class: "dot", style: `background:${projectColor(t.project)}` }) : null, `#${t.id}`)),
+    row || !review ? null : mark,
     ...summary(t, waitChip(t), urlChip(t)).slice(row ? 1 : 0));
   node.addEventListener("dragstart", (e) => {
     state.dragging = t.id;
